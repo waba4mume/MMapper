@@ -309,10 +309,6 @@ void MainWindow::createActions()
   exportBaseMapAct->setStatusTip(tr("Save a copy of the map with no secrets"));
   connect(exportBaseMapAct, SIGNAL(triggered()), this, SLOT(exportBaseMap()));
 
-  exportWebMapAct = new QAction(tr("Export &Web Map As..."), this);
-  exportWebMapAct->setStatusTip(tr("Save a copy of the map for webclients"));
-  connect(exportWebMapAct, SIGNAL(triggered()), this, SLOT(exportWebMap()));
-
   mergeAct = new QAction(QIcon(":/icons/merge.png"), tr("&Merge..."), this);
   //mergeAct->setShortcut(tr("Ctrl+M"));
   mergeAct->setStatusTip(tr("Merge an existing file into current map"));
@@ -585,7 +581,6 @@ void MainWindow::disableActions(bool value)
   saveAct->setDisabled(value);
   saveAsAct->setDisabled(value);
   exportBaseMapAct->setDisabled(value);
-  exportWebMapAct->setDisabled(value);
   exitAct->setDisabled(value);
   cutAct->setDisabled(value);
   copyAct->setDisabled(value);
@@ -620,7 +615,6 @@ void MainWindow::setupMenuBar()
   fileMenu->addAction(saveAct);
   fileMenu->addAction(saveAsAct);
   fileMenu->addAction(exportBaseMapAct);
-  fileMenu->addAction(exportWebMapAct);
   fileMenu->addAction(mergeAct);
   fileMenu->addSeparator();
   fileMenu->addAction(exitAct);
@@ -996,6 +990,10 @@ bool MainWindow::saveAs()
 bool MainWindow::exportBaseMap()
 {
   QPointer<QFileDialog> save = defaultSaveDialog();
+  QStringList filters = save->nameFilters();
+  filters << "Web clients export (*.json)";
+  save->setNameFilters(filters);
+  save->setDefaultSuffix("mm2");
 
   QFileInfo currentFile( m_mapData->getFileName() );
   if ( currentFile.exists() )
@@ -1016,33 +1014,6 @@ bool MainWindow::exportBaseMap()
   }
 
   return saveFile(fileNames[0], SAVE_BASEMAP);
-}
-
-bool MainWindow::exportWebMap()
-{
-  QPointer<QFileDialog> save = defaultSaveDialog();
-  save->setNameFilter("JSON files (*.json)");
-  save->setDefaultSuffix("json");
-
-  QFileInfo currentFile( m_mapData->getFileName() );
-  if ( currentFile.exists() )
-  {
-    save->setDirectory( currentFile.absoluteDir() );
-    QString fileName = currentFile.fileName();
-    save->selectFile( fileName.replace( QRegExp( "\\.mm2$" ), ".json" ) );
-  }
-
-  QStringList fileNames;
-  if (save->exec()) {
-    fileNames = save->selectedFiles();
-  }
-
-  if (fileNames.isEmpty()) {
-    statusBar()->showMessage(tr("No filename provided"), 2000);
-    return false;
-  }
-
-  return saveFile(fileNames[0], SAVE_WEB);
 }
 
 void MainWindow::about()
@@ -1168,10 +1139,17 @@ bool MainWindow::saveFile(const QString &fileName, SaveMode mode )
   progressDlg->show();
 
   std::auto_ptr<AbstractMapStorage> storage;
-  if ( mode == SAVE_WEB )
+  if (fileName.endsWith(".mm2"))
+    storage.reset( new MapStorage(*m_mapData , fileName, &saver.file()) );
+  else if (fileName.endsWith(".json"))
     storage.reset( new JsonMapStorage(*m_mapData , fileName, &saver.file()) );
   else
-    storage.reset( new MapStorage(*m_mapData , fileName, &saver.file()) );
+  {
+    QMessageBox::warning(NULL, tr("Application"),
+                         tr("Unknown file extension for %1.") .arg(fileName));
+    getCurrentMapWindow()->getCanvas()->setEnabled(true);
+    return false;
+  }
 
   connect(storage->progressCounter(), SIGNAL(onPercentageChanged(quint32)), this, SLOT(percentageChanged(quint32)));
   connect(storage.get(), SIGNAL(log(const QString&, const QString&)), this, SLOT(log(const QString&, const QString&)));
