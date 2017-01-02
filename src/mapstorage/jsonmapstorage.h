@@ -31,6 +31,9 @@
 
 class JsonRoomIdsCache;
 
+/*! \brief JSON export for web clients.
+ *
+ * This produces a roomID-indexed hash containing room structures as hashes. */
 class JsonMapStorage : public AbstractMapStorage {
 
     Q_OBJECT

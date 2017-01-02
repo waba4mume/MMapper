@@ -51,11 +51,16 @@
 
 using namespace std;
 
+/* JsonRoomIdsCache: This is room for possibly indexing the rooms by name &
+ * desc later. For now we use the internal MM2 ID. The JsonId needs to be short
+ * enough to be referenced in room exits. NB: there *are* collisions in
+ * name+descs. */
+
 namespace
 {
 QString getJsonId(const Room *room)
 {
-  return QString::number(QString("%1\n%2").arg(getName(room)).arg(getDescription(room)).size());
+  return QString::number(room->getId());
 }
 }
 
@@ -75,7 +80,7 @@ void JsonRoomIdsCache::buildCache(QList<const Room *> roomList)
   while (roomit.hasNext())
   {
     const Room *room = roomit.next();
-    // TODO sanity check: catch collisions
+    // NB: catch collisions if using some kind of checksum here
     m_cache[room->getId()] = getJsonId(room);
   }
 }
@@ -220,6 +225,7 @@ bool JsonMapStorage::saveData( bool baseMapOnly )
   QJsonObject jRooms;
 
   // save rooms
+  unsigned filtered = 0, saved = 0;
   QListIterator<const Room *> roomit(roomList);
   while (roomit.hasNext())
   {
@@ -238,17 +244,23 @@ bool JsonMapStorage::saveData( bool baseMapOnly )
         {
           saveRoom(room, jRooms, jRoomIds);
         }
+        ++saved;
       }
+      else
+        ++filtered;
     }
     else
     {
       saveRoom(room, jRooms, jRoomIds);
+        ++saved;
     }
 
     m_progressCounter->step();
   }
+  emit log ("JsonMapStorage", tr("%1 rooms saved, %2 rooms filtered out.").arg(saved).arg(filtered));
 
   stream << QJsonDocument(jRooms).toJson();
+  stream.flush();
 
   emit log ("JsonMapStorage", "Writing data finished.");
 
