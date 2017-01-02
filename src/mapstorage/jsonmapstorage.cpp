@@ -248,7 +248,6 @@ bool JsonMapStorage::saveData( bool baseMapOnly )
     m_progressCounter->step();
   }
 
-  stream << "/* MMapper Json Data v1 */\n";
   stream << QJsonDocument(jRooms).toJson();
 
   emit log ("JsonMapStorage", "Writing data finished.");
