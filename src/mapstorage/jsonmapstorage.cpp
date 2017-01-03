@@ -52,44 +52,46 @@
 using namespace std;
 
 /* JsonRoomIdsCache: This is room for possibly indexing the rooms by name &
- * desc later. For now we use the internal MM2 ID. The JsonId needs to be short
- * enough to be referenced in room exits. NB: there *are* collisions in
- * name+descs. */
-
-namespace
-{
-QString getJsonId(const Room *room)
-{
-  return QString::number(room->getId());
-}
-}
+ * desc into a JsonObject later. For now we use sequential integers to build a
+ * hole-free JsonArray. */
 
 class JsonRoomIdsCache
 {
-  typedef QMap<uint, QString> CacheT;
+  typedef QMap<uint, uint> CacheT;
   CacheT m_cache;
+  uint m_nextJsonId;
 
 public:
-  void buildCache(QList<const Room *> rooms);
-  QString operator[](uint roomId) const;
+  JsonRoomIdsCache();
+  void buildCache(QList<uint> roomIds);
+  uint operator[](uint roomId) const;
+  uint size() const;
 };
 
-void JsonRoomIdsCache::buildCache(QList<const Room *> roomList)
+JsonRoomIdsCache::JsonRoomIdsCache()
+ : m_nextJsonId(0)
 {
-  QListIterator<const Room *> roomit(roomList);
-  while (roomit.hasNext())
+}
+
+void JsonRoomIdsCache::buildCache(QList<uint> roomIds)
+{
+  for ( QList<uint>::const_iterator iter = roomIds.begin();
+    iter != roomIds.end(); ++iter )
   {
-    const Room *room = roomit.next();
-    // NB: catch collisions if using some kind of checksum here
-    m_cache[room->getId()] = getJsonId(room);
+    m_cache[*iter] = m_nextJsonId++;
   }
 }
 
-QString JsonRoomIdsCache::operator[](uint roomId) const
+uint JsonRoomIdsCache::operator[](uint roomId) const
 {
   CacheT::const_iterator it = m_cache.find(roomId);
   assert(it != m_cache.end());
   return *it;
+}
+
+uint JsonRoomIdsCache::size() const
+{
+    return m_nextJsonId;
 }
 
 
@@ -123,7 +125,7 @@ bool JsonMapStorage::mergeData()
   return false;
 }
 
-void JsonMapStorage::saveRoom(const Room * room, QJsonObject &jRooms, const JsonRoomIdsCache &jRoomIds)
+void JsonMapStorage::saveRoom(const Room * room, QJsonArray &jRooms, const JsonRoomIdsCache &jRoomIds)
 {
   /*
         x: 5, y: 5, z: 0,
@@ -140,8 +142,8 @@ void JsonMapStorage::saveRoom(const Room * room, QJsonObject &jRooms, const Json
   jr["y"] = pos.y;
   jr["z"] = pos.z;
 
-  QString jsonId = jRoomIds[room->getId()];
-  jr["id"]        = jsonId;
+  uint jsonId = jRoomIds[room->getId()];
+  jr["id"]        = QString::number(jsonId);
   jr["name"]      = getName(room);
   jr["desc"]      = getDescription(room);
   jr["sector"]    = (quint8)getTerrainType(room);
@@ -172,14 +174,14 @@ void JsonMapStorage::saveExits(const Room * room, QJsonObject &jr, const JsonRoo
     QJsonArray jin;
     for (set<uint>::const_iterator i = e.inBegin(); i != e.inEnd(); ++i)
     {
-      jin << jRoomIds[*i];
+      jin << QString::number(jRoomIds[*i]);
     }
     je["in"] = jin;
 
     QJsonArray jout;
     for (set<uint>::const_iterator i = e.outBegin(); i != e.outEnd(); ++i)
     {
-      jout << jRoomIds[*i];
+      jout << QString::number(jRoomIds[*i]);
     }
     je["out"] = jout;
 
@@ -198,7 +200,8 @@ bool JsonMapStorage::saveData( bool baseMapOnly )
   // Collect the room and marker lists. The room list can't be acquired
   // directly apparently and we have to go through a RoomSaver which receives
   // them from a sort of callback function.
-  QList<const Room *> roomList;
+  typedef QList<const Room *> RoomList;
+  RoomList roomList;
   MarkerList& markerList = m_mapData.getMarkersList();
   RoomSaver saver(&m_mapData, roomList);
   for (uint i = 0; i < m_mapData.getRoomsCount(); ++i)
@@ -209,7 +212,7 @@ bool JsonMapStorage::saveData( bool baseMapOnly )
   uint roomsCount = saver.getRoomsCount();
   uint marksCount = markerList.size();
   m_progressCounter->reset();
-  m_progressCounter->increaseTotalStepsBy( roomsCount + marksCount );
+  m_progressCounter->increaseTotalStepsBy( roomsCount * 2 + marksCount );
 
   BaseMapSaveFilter filter;
   if ( baseMapOnly )
@@ -219,50 +222,76 @@ bool JsonMapStorage::saveData( bool baseMapOnly )
       filter.prepare( m_progressCounter );
   }
 
-  JsonRoomIdsCache jRoomIds;
-  jRoomIds.buildCache(roomList);
-
-  QJsonObject jRooms;
-
-  // save rooms
-  unsigned filtered = 0, saved = 0;
-  QListIterator<const Room *> roomit(roomList);
-  while (roomit.hasNext())
+  // Collect the room IDs for the JsonId cache
+  RoomList roomsToSave;
+  QList<uint> roomIdsToSave;
+  for ( RoomList::const_iterator roomIter = roomList.begin();
+    roomIter != roomList.end(); ++roomIter )
   {
-    const Room *room = roomit.next();
+    const Room *room = *roomIter;
     if ( baseMapOnly )
     {
       BaseMapSaveFilter::Action action = filter.filter( room );
       if ( !room->isTemporary() && action != BaseMapSaveFilter::REJECT )
       {
-        if ( action == BaseMapSaveFilter::ALTER )
-        {
-          Room copy = filter.alteredRoom( room );
-          saveRoom( &copy, jRooms, jRoomIds );
-        }
-        else // action == PASS
-        {
-          saveRoom(room, jRooms, jRoomIds);
-        }
-        ++saved;
+        roomsToSave.push_back( room );
+        roomIdsToSave.push_back( room->getId() );
       }
-      else
-        ++filtered;
     }
     else
     {
-      saveRoom(room, jRooms, jRoomIds);
-        ++saved;
+      roomsToSave.push_back( room );
+      roomIdsToSave.push_back( room->getId() );
     }
 
     m_progressCounter->step();
   }
-  emit log ("JsonMapStorage", tr("%1 rooms saved, %2 rooms filtered out.").arg(saved).arg(filtered));
+
+  // Prepare a map of MM2 room IDs -> JSON room IDs
+  JsonRoomIdsCache jRoomIds;
+  jRoomIds.buildCache( roomIdsToSave );
+
+  // Qt JSON data structure. Inelegant but simple: initialize it at the right
+  // size to allow random access to it.
+  QJsonArray jRooms;
+  for ( uint jsonId = 0; jsonId < jRoomIds.size(); ++jsonId )
+    jRooms.push_back( QJsonValue() );
+
+  // save rooms
+  for ( RoomList::const_iterator saveIter = roomsToSave.begin();
+    saveIter != roomsToSave.end(); ++saveIter )
+  {
+    const Room *room = *saveIter;
+    if ( baseMapOnly )
+    {
+      BaseMapSaveFilter::Action action = filter.filter( room );
+      if ( action == BaseMapSaveFilter::ALTER )
+      {
+        Room copy = filter.alteredRoom( room );
+        saveRoom( &copy, jRooms, jRoomIds );
+      }
+      else // action == PASS
+      {
+        saveRoom(room, jRooms, jRoomIds);
+      }
+    }
+    else
+    {
+      saveRoom(room, jRooms, jRoomIds);
+    }
+
+    m_progressCounter->step();
+  }
+  emit log ("JsonMapStorage", tr("%1 rooms saved, %2 rooms filtered out.")
+    .arg(roomIdsToSave.size())
+    .arg(roomList.size() - roomIdsToSave.size()));
 
   stream << QJsonDocument(jRooms).toJson();
   stream.flush();
 
   emit log ("JsonMapStorage", "Writing data finished.");
+
+  assert(!jRooms.contains(QJsonValue())); // All array elements should have received a room
 
   m_mapData.unsetDataChanged();
   emit onDataSaved();
@@ -271,7 +300,7 @@ bool JsonMapStorage::saveData( bool baseMapOnly )
 }
 
 
-void JsonMapStorage::saveMark(InfoMark * mark, QJsonObject &jRooms, const JsonRoomIdsCache &jRoomIds)
+void JsonMapStorage::saveMark(InfoMark * mark, QJsonObject &jRoom, const JsonRoomIdsCache &jRoomIds)
 {
   /*
   stream << (QString)mark->getName();

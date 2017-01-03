@@ -29,6 +29,8 @@
 
 #include "abstractmapstorage.h"
 
+class QJsonArray;
+class QJsonObject;
 class JsonRoomIdsCache;
 
 /*! \brief JSON export for web clients.
@@ -52,9 +54,9 @@ private:
     virtual bool saveData( bool baseMapOnly );
     virtual bool mergeData();
 
-    void saveMark(InfoMark * mark, QJsonObject &jRooms, const JsonRoomIdsCache &jRoomIds);
-    void saveRoom(const Room * room, QJsonObject &jRooms, const JsonRoomIdsCache &jRoomIds);
-    void saveExits(const Room * room, QJsonObject &jRooms, const JsonRoomIdsCache &jRoomIds);
+    void saveMark(InfoMark * mark, QJsonObject &jRoom, const JsonRoomIdsCache &jRoomIds);
+    void saveRoom(const Room * room, QJsonArray &jRooms, const JsonRoomIdsCache &jRoomIds);
+    void saveExits(const Room * room, QJsonObject &jRoom, const JsonRoomIdsCache &jRoomIds);
 };
 
 #endif
